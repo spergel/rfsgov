@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /projects/{projectId} {
+      // During development, allow all operations
+      allow read, write: if true;
+      
+      // TODO: Implement stricter rules for production
+      // allow read: if true;
+      // allow create: if request.auth != null && 
+      //              request.resource.data.contactEmail.matches('.*@.*\\.gov$');
+      // allow update: if request.auth != null && 
+      //              request.auth.token.email.matches('.*@.*\\.gov$');
+      // allow delete: if false;
+    }
+  }
+} 

@@ -1,0 +1,30 @@
+type Project {
+  id: ID!
+  title: String!
+  description: String!
+  category: String!
+  status: String!
+  createdAt: Timestamp!
+  contactEmail: String!
+  tags: [String]
+}
+
+type Query {
+  approvedProjects: [Project!]!
+  projectById(id: ID!): Project
+}
+
+type Mutation {
+  createProject(
+    title: String!
+    description: String!
+    category: String!
+    contactEmail: String!
+    tags: [String]
+  ): Project!
+  
+  updateProjectStatus(
+    id: ID!
+    status: String!
+  ): Project!
+} 
