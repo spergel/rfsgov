@@ -1,244 +1,295 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { db } from '../firebase.js';
-import { collection, addDoc, serverTimestamp, getDocs } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import TagInput from '../components/TagInput';
+import { useState, useCallback } from 'react';
+import { collection, addDoc } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { useDropzone } from 'react-dropzone';
+import { db } from '../firebase';
 
 function Submit() {
-  const navigate = useNavigate();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
-  const [error, setError] = useState('');
-  const [submitStatus, setSubmitStatus] = useState('');
-  const [confirmationCode, setConfirmationCode] = useState('');
-  const [isConfirmationSent, setIsConfirmationSent] = useState(false);
-  const [enteredCode, setEnteredCode] = useState('');
-  const [selectedTags, setSelectedTags] = useState([]);
-  const [availableTags, setAvailableTags] = useState([]);
+  const [formData, setFormData] = useState({
+    legislativeOffice: '', // required
+    title: '', // required
+    problemStatement: '', // required
+    description: '', // optional, general description
+    currentSituation: '', // optional
+    desiredOutcome: '', // optional
+    contactEmail: '', // required, .gov
+    projectType: 'volunteer',
+    budget: '', // New field for budget amount
+    additionalNotes: '', // optional, for any other details
+  });
 
-  const functions = getFunctions();
+  const [loading, setLoading] = useState(false);
+  const [emailError, setEmailError] = useState('');
 
-  useEffect(() => {
-    // Fetch available tags and add default category tags
-    const fetchTags = async () => {
-      try {
-        const defaultCategories = [
-          'Technology',
-          'Infrastructure',
-          'Healthcare',
-          'Education',
-          'Other'
-        ];
-
-        const tagsRef = collection(db, 'tags');
-        const tagsSnapshot = await getDocs(tagsRef);
-        const existingTags = tagsSnapshot.docs.map(doc => doc.data().name);
-        
-        // Add any default categories that don't exist yet
-        for (const category of defaultCategories) {
-          if (!existingTags.includes(category)) {
-            await addDoc(tagsRef, {
-              name: category,
-              createdAt: serverTimestamp(),
-              isCategory: true
-            });
-          }
-        }
-
-        // Fetch all tags again to get the complete list
-        const updatedTagsSnapshot = await getDocs(tagsRef);
-        const tagsList = updatedTagsSnapshot.docs.map(doc => doc.data().name);
-        setAvailableTags(tagsList);
-      } catch (error) {
-        console.error('Error fetching tags:', error);
-      }
-    };
-    fetchTags();
-  }, []);
-
-  const validateGovEmail = (email) => {
-    return email.toLowerCase().endsWith('.gov');
-  };
-
-  const generateConfirmationCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
-
-  const handleSendConfirmation = async (e) => {
-    e.preventDefault();
+  const validateEmail = (email) => {
+    // For testing, allow .com. In production, change to .gov only
+    const testMode = true; // Set to false in production
+    const emailRegex = testMode 
+      ? /^[^\s@]+@[^\s@]+\.(gov|com)$/
+      : /^[^\s@]+@[^\s@]+\.gov$/;
     
-    if (!validateGovEmail(contactEmail)) {
-      setError('Please use a valid .gov email address');
-      return;
-    }
+    return emailRegex.test(email);
+  };
 
-    try {
-      const code = generateConfirmationCode();
-      setConfirmationCode(code);
-      
-      // Debug log
-      console.log('Starting confirmation request...');
-      
-      const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmation', {
-        timeout: 60000 // 60 second timeout
-      });
-
-      // Debug log
-      console.log('Sending data:', {
-        email: contactEmail,
-        code: code,
-        projectTitle: title
-      });
-
-      const result = await sendConfirmationEmail({
-        email: contactEmail,
-        code: code,
-        projectTitle: title
-      });
-
-      // Debug log
-      console.log('Server response:', result);
-
-      if (!result.data || !result.data.success) {
-        throw new Error(result.data?.error || 'Server returned unsuccessful response');
-      }
-      
-      setIsConfirmationSent(true);
-      setError('');
-    } catch (error) {
-      // Detailed error logging
-      console.error('=== Error Details ===');
-      console.error('Error object:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      console.error('Error details:', error.details);
-      console.error('Error stack:', error.stack);
-      
-      setError(`Failed to send confirmation email: ${error.message || 'Unknown error'}`);
+  const handleEmailChange = (e) => {
+    const email = e.target.value;
+    setFormData(prev => ({ ...prev, contactEmail: email }));
+    
+    if (email && !validateEmail(email)) {
+      setEmailError('Must be a .gov email address');
+    } else {
+      setEmailError('');
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (enteredCode !== confirmationCode) {
-      setError('Invalid confirmation code');
+    if (!validateEmail(formData.contactEmail)) {
+      setEmailError('Must be a .gov email address');
       return;
     }
-
-    if (selectedTags.length === 0) {
-      setError('Please select at least one tag');
-      return;
-    }
+    setLoading(true);
 
     try {
-      setSubmitStatus('processing');
-      
-      await addDoc(collection(db, 'projects'), {
-        title,
-        description,
-        contactEmail,
-        tags: selectedTags,
-        status: 'pending',
-        createdAt: serverTimestamp(),
-        verified: true
+      await addDoc(collection(db, 'legislative-requests'), {
+        ...formData,
+        status: 'open',
+        createdAt: new Date().toISOString(),
       });
-      
-      setSubmitStatus('success');
-      setError('');
-      
-      setTimeout(() => {
-        navigate('/');
-      }, 2000);
 
+      alert('Your request has been posted successfully!');
+      setFormData({
+        legislativeOffice: '',
+        title: '',
+        problemStatement: '',
+        description: '',
+        currentSituation: '',
+        desiredOutcome: '',
+        contactEmail: '',
+        projectType: 'volunteer',
+        budget: '',
+        additionalNotes: '',
+      });
     } catch (error) {
-      console.error('Error submitting project:', error);
-      setError('Failed to submit project. Please try again.');
-      setSubmitStatus('error');
+      console.error('Error submitting request:', error);
+      alert('Failed to submit request. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <h2 className="text-2xl font-bold mb-4">Submit New Project Request</h2>
-      
-      {error && <div className="bg-red-100 text-red-700 p-3 mb-4 rounded">{error}</div>}
-      {submitStatus === 'success' && (
-        <div className="bg-green-100 text-green-700 p-3 mb-4 rounded">
-          Project submitted successfully!
-        </div>
-      )}
+      <h2 className="text-2xl font-bold mb-4">Post Tech Request</h2>
+      <p className="text-gray-600 mb-8">
+        Share your office's needs for websites, apps, or data tools. 
+        Connect with civic-minded developers who can help build solutions.
+      </p>
 
-      <form onSubmit={isConfirmationSent ? handleSubmit : handleSendConfirmation} className="max-w-lg">
-        <div className="mb-4">
-          <label className="block mb-2">Title</label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            required
-            className="w-full p-2 border rounded"
-          />
-        </div>
-        
-        <div className="mb-4">
-          <label className="block mb-2">Description</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            required
-            className="w-full p-2 border rounded h-32"
-          />
-        </div>
-        
-        <div className="mb-4">
-          <label className="block mb-2">Government Email (.gov required)</label>
-          <input
-            type="email"
-            value={contactEmail}
-            onChange={(e) => setContactEmail(e.target.value)}
-            required
-            pattern=".+\.gov$"
-            className="w-full p-2 border rounded"
-            disabled={isConfirmationSent}
-            placeholder="your.name@agency.gov"
-          />
-        </div>
+      <form onSubmit={handleSubmit} className="max-w-2xl space-y-6">
+        {/* Required Fields */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <h3 className="text-lg font-semibold mb-4">Required Information</h3>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Legislative Office <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.legislativeOffice}
+                onChange={(e) => setFormData(prev => ({ ...prev, legislativeOffice: e.target.value }))}
+                required
+                className="w-full px-4 py-2 border rounded"
+                placeholder="e.g., Office of Senator Smith, Education Committee"
+              />
+            </div>
 
-        {isConfirmationSent && (
-          <div className="mb-4">
-            <label className="block mb-2">Confirmation Code</label>
-            <input
-              type="text"
-              value={enteredCode}
-              onChange={(e) => setEnteredCode(e.target.value)}
-              required
-              className="w-full p-2 border rounded"
-              placeholder="Enter the code sent to your email"
-            />
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Project Title <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
+                required
+                className="w-full px-4 py-2 border rounded"
+                placeholder="e.g., Education Budget Dashboard, Constituent Data Tool"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Problem Statement <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={formData.problemStatement}
+                onChange={(e) => setFormData(prev => ({ ...prev, problemStatement: e.target.value }))}
+                required
+                rows={3}
+                className="w-full px-4 py-2 border rounded"
+                placeholder="What problem needs solving? Be specific about what you need."
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Contact Email <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="email"
+                value={formData.contactEmail}
+                onChange={handleEmailChange}
+                required
+                className={`w-full px-4 py-2 border rounded ${emailError ? 'border-red-500' : ''}`}
+                placeholder="your.email@agency.gov"
+              />
+              {emailError && (
+                <p className="mt-1 text-sm text-red-500">{emailError}</p>
+              )}
+            </div>
           </div>
-        )}
-        
-        <div className="mb-6">
-          <label className="block text-gray-700 text-sm font-bold mb-2">
-            Tags (Select at least one)
-          </label>
-          <TagInput
-            selectedTags={selectedTags}
-            onTagsChange={setSelectedTags}
-            availableTags={availableTags}
-          />
         </div>
-        
+
+        {/* Optional Details */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <h3 className="text-lg font-semibold mb-4">Additional Details (Optional)</h3>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                General Description
+              </label>
+              <textarea
+                value={formData.description}
+                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                rows={3}
+                className="w-full px-4 py-2 border rounded"
+                placeholder="Provide any additional context or general information about your request"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Current Process
+              </label>
+              <textarea
+                value={formData.currentSituation}
+                onChange={(e) => setFormData(prev => ({ ...prev, currentSituation: e.target.value }))}
+                rows={2}
+                className="w-full px-4 py-2 border rounded"
+                placeholder="How is this currently being handled?"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Desired Outcome
+              </label>
+              <textarea
+                value={formData.desiredOutcome}
+                onChange={(e) => setFormData(prev => ({ ...prev, desiredOutcome: e.target.value }))}
+                rows={2}
+                className="w-full px-4 py-2 border rounded"
+                placeholder="What would you like the end result to look like?"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Additional Notes
+              </label>
+              <textarea
+                value={formData.additionalNotes}
+                onChange={(e) => setFormData(prev => ({ ...prev, additionalNotes: e.target.value }))}
+                rows={3}
+                className="w-full px-4 py-2 border rounded"
+                placeholder="Any other details that might be helpful for developers"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Project Type */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <h3 className="text-lg font-semibold mb-4">Project Type</h3>
+          
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, projectType: 'volunteer', budget: '' }))}
+                className={`p-4 rounded-lg border-2 text-center ${
+                  formData.projectType === 'volunteer'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-semibold">Volunteer Project</div>
+                <div className="text-sm text-gray-600">Seeking civic-minded developers</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, projectType: 'paid' }))}
+                className={`p-4 rounded-lg border-2 text-center ${
+                  formData.projectType === 'paid'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-semibold">Paid Project</div>
+                <div className="text-sm text-gray-600">Budget available</div>
+              </button>
+            </div>
+
+            {/* Budget Input - Only shows when paid is selected */}
+            {formData.projectType === 'paid' && (
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Estimated Budget <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <span className="text-gray-500 sm:text-sm">$</span>
+                  </div>
+                  <input
+                    type="number"
+                    value={formData.budget}
+                    onChange={(e) => setFormData(prev => ({ 
+                      ...prev, 
+                      budget: e.target.value 
+                    }))}
+                    required={formData.projectType === 'paid'}
+                    min="0"
+                    step="1000"
+                    className="w-full pl-7 pr-12 py-2 border rounded focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="0"
+                  />
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <span className="text-gray-500 sm:text-sm">USD</span>
+                  </div>
+                </div>
+                <p className="mt-1 text-sm text-gray-500">
+                  Enter the estimated budget for this project
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
         <button
           type="submit"
-          disabled={submitStatus === 'processing'}
-          className="bg-patriot-red text-white px-4 py-2 rounded hover:bg-red-700 transition disabled:opacity-50"
+          disabled={loading}
+          className={`w-full px-6 py-3 text-white rounded-lg text-lg font-semibold ${
+            loading
+              ? 'bg-gray-400 cursor-not-allowed'
+              : 'bg-blue-500 hover:bg-blue-600'
+          }`}
         >
-          {submitStatus === 'processing' ? 'Processing...' : 
-           isConfirmationSent ? 'Submit Project' : 'Send Confirmation Code'}
+          {loading ? 'Posting...' : 'Post Request'}
         </button>
       </form>
     </div>
