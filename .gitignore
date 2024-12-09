@@ -29,3 +29,4 @@ firebase-debug.log
 # environment variables
 .env
 .env.local
+.dev.vars

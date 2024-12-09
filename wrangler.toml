@@ -1,0 +1,6 @@
+kv_namespaces = [
+  { binding = "USERS_KV", id = "97564a409d2243449f2c232ab1fb5873" },
+  { binding = "PROJECTS_KV", id = "fd9201daf99e43d8a01da322372f65c9" }
+]
+
+[vars]

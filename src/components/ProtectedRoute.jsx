@@ -1,16 +1,15 @@
-import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth0 } from '@auth0/auth0-react';
+import { Navigate } from 'react-router-dom';
 
-function ProtectedRoute({ children, adminOnly = false }) {
-  const { currentUser, isAdmin } = useAuth();
-  const location = useLocation();
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, isLoading } = useAuth0();
 
-  if (!currentUser) {
-    return <Navigate to="/login" state={{ from: location.pathname }} />;
+  if (isLoading) {
+    return <div>Loading...</div>;
   }
 
-  if (adminOnly && !isAdmin(currentUser.email)) {
-    return <Navigate to="/" />;
+  if (!isAuthenticated) {
+    return <Navigate to="/login" />;
   }
 
   return children;

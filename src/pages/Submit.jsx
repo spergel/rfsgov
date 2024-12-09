@@ -1,8 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { collection, addDoc } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { useDropzone } from 'react-dropzone';
 import { db } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
 
 function Submit() {
   const [formData, setFormData] = useState({
@@ -20,8 +20,18 @@ function Submit() {
 
   const [loading, setLoading] = useState(false);
   const [emailError, setEmailError] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [showVerification, setShowVerification] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+  const [touched, setTouched] = useState({});
+
+  const sendVerificationEmail = httpsCallable(functions, 'sendVerificationEmail');
+  const verifyEmailCode = httpsCallable(functions, 'verifyEmailCode');
 
   const validateEmail = (email) => {
+    // Allow .gov emails OR spergel.joshua@gmail.com
+    if (email === 'spergel.joshua@gmail.com') return true;
+    
     // For testing, allow .com. In production, change to .gov only
     const testMode = true; // Set to false in production
     const emailRegex = testMode 
@@ -42,41 +52,97 @@ function Submit() {
     }
   };
 
-  const handleSubmit = async (e) => {
+  const handleSendCode = async (e) => {
     e.preventDefault();
     if (!validateEmail(formData.contactEmail)) {
       setEmailError('Must be a .gov email address');
       return;
     }
+
     setLoading(true);
-
     try {
-      await addDoc(collection(db, 'legislative-requests'), {
-        ...formData,
-        status: 'open',
-        createdAt: new Date().toISOString(),
-      });
-
-      alert('Your request has been posted successfully!');
-      setFormData({
-        legislativeOffice: '',
-        title: '',
-        problemStatement: '',
-        description: '',
-        currentSituation: '',
-        desiredOutcome: '',
-        contactEmail: '',
-        projectType: 'volunteer',
-        budget: '',
-        additionalNotes: '',
-      });
+      await sendVerificationEmail({ email: formData.contactEmail });
+      setEmailSent(true);
+      setShowVerification(true);
+      alert('Verification code sent to your email');
     } catch (error) {
-      console.error('Error submitting request:', error);
-      alert('Failed to submit request. Please try again.');
+      console.error('Error sending verification:', error);
+      alert('Failed to send verification code');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!verificationCode) {
+      alert('Please enter verification code');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Verify the code first
+      const verifyResult = await verifyEmailCode({ 
+        email: formData.contactEmail, 
+        code: verificationCode 
+      });
+
+      if (verifyResult.data.verified) {
+        // If verified, submit the request
+        const docRef = await addDoc(collection(db, 'legislative-requests'), {
+          ...formData,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        });
+
+        alert('Your request has been submitted successfully!');
+        // Reset form
+        setFormData({
+          legislativeOffice: '',
+          title: '',
+          problemStatement: '',
+          description: '',
+          currentSituation: '',
+          desiredOutcome: '',
+          contactEmail: '',
+          projectType: 'volunteer',
+          additionalNotes: '',
+        });
+        setVerificationCode('');
+        setShowVerification(false);
+        setEmailSent(false);
+      } else {
+        alert('Invalid verification code');
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Failed to verify code or submit request');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const validateField = (name, value) => {
+    if (required.includes(name) && !value) {
+      return 'This field is required';
+    }
+    return '';
+  };
+
+  const required = ['legislativeOffice', 'title', 'problemStatement', 'contactEmail'];
+
+  const handleBlur = (name) => {
+    setTouched(prev => ({ ...prev, [name]: true }));
+  };
+
+  const isFieldInvalid = (name) => {
+    return touched[name] && validateField(name, formData[name]);
+  };
+
+  const inputClasses = (name) => `w-full px-4 py-2 border rounded ${
+    isFieldInvalid(name) ? 'border-red-500 bg-red-50' : ''
+  }`;
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -98,12 +164,17 @@ function Submit() {
               </label>
               <input
                 type="text"
+                name="legislativeOffice"
                 value={formData.legislativeOffice}
-                onChange={(e) => setFormData(prev => ({ ...prev, legislativeOffice: e.target.value }))}
+                onChange={(e) => setFormData({...formData, legislativeOffice: e.target.value})}
+                onBlur={() => handleBlur('legislativeOffice')}
+                className={inputClasses('legislativeOffice')}
                 required
-                className="w-full px-4 py-2 border rounded"
                 placeholder="e.g., Office of Senator Smith, Education Committee"
               />
+              {isFieldInvalid('legislativeOffice') && (
+                <p className="text-red-500 text-sm mt-1">This field is required</p>
+              )}
             </div>
 
             <div>
@@ -245,52 +316,57 @@ function Submit() {
               </button>
             </div>
 
-            {/* Budget Input - Only shows when paid is selected */}
             {formData.projectType === 'paid' && (
-              <div className="mt-4">
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Estimated Budget <span className="text-red-500">*</span>
+                  Available Budget
                 </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <span className="text-gray-500 sm:text-sm">$</span>
-                  </div>
-                  <input
-                    type="number"
-                    value={formData.budget}
-                    onChange={(e) => setFormData(prev => ({ 
-                      ...prev, 
-                      budget: e.target.value 
-                    }))}
-                    required={formData.projectType === 'paid'}
-                    min="0"
-                    step="1000"
-                    className="w-full pl-7 pr-12 py-2 border rounded focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="0"
-                  />
-                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                    <span className="text-gray-500 sm:text-sm">USD</span>
-                  </div>
-                </div>
-                <p className="mt-1 text-sm text-gray-500">
-                  Enter the estimated budget for this project
-                </p>
+                <input
+                  type="text"
+                  value={formData.budget}
+                  onChange={(e) => setFormData(prev => ({ ...prev, budget: e.target.value }))}
+                  className="w-full px-4 py-2 border rounded"
+                  placeholder="Enter budget amount"
+                />
               </div>
             )}
           </div>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className={`w-full px-6 py-3 text-white rounded-lg text-lg font-semibold ${
-            loading
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-blue-500 hover:bg-blue-600'
-          }`}
-        >
-          {loading ? 'Posting...' : 'Post Request'}
-        </button>
+        <div>
+          {!showVerification ? (
+            <button
+              type="button"
+              onClick={handleSendCode}
+              disabled={loading || !formData.contactEmail}
+              className="w-full px-6 py-3 text-white rounded-lg text-lg font-semibold bg-blue-500 hover:bg-blue-600"
+            >
+              {loading ? 'Sending...' : 'Send Verification Code'}
+            </button>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Verification Code
+                </label>
+                <input
+                  type="text"
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value)}
+                  className="w-full px-4 py-2 border rounded"
+                  placeholder="Enter code from email"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading || !verificationCode}
+                className="w-full px-6 py-3 text-white rounded-lg text-lg font-semibold bg-blue-500 hover:bg-blue-600"
+              >
+                {loading ? 'Submitting...' : 'Submit Request'}
+              </button>
+            </div>
+          )}
+        </div>
       </form>
     </div>
   );
