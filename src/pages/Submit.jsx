@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+import confetti from 'canvas-confetti';
 
 function Submit() {
   const [formData, setFormData] = useState({
@@ -29,16 +30,12 @@ function Submit() {
   const verifyEmailCode = httpsCallable(functions, 'verifyEmailCode');
 
   const validateEmail = (email) => {
-    // Allow .gov emails OR spergel.joshua@gmail.com
+    // Special case for testing
     if (email === 'spergel.joshua@gmail.com') return true;
     
-    // For testing, allow .com. In production, change to .gov only
-    const testMode = true; // Set to false in production
-    const emailRegex = testMode 
-      ? /^[^\s@]+@[^\s@]+\.(gov|com)$/
-      : /^[^\s@]+@[^\s@]+\.gov$/;
-    
-    return emailRegex.test(email);
+    // Strict .gov validation
+    const govEmailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.gov$/;
+    return govEmailRegex.test(email);
   };
 
   const handleEmailChange = (e) => {
@@ -46,7 +43,7 @@ function Submit() {
     setFormData(prev => ({ ...prev, contactEmail: email }));
     
     if (email && !validateEmail(email)) {
-      setEmailError('Must be a .gov email address');
+      setEmailError('Only .gov email addresses are accepted for submissions');
     } else {
       setEmailError('');
     }

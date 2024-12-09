@@ -7,10 +7,9 @@ service cloud.firestore {
       allow update: if true;
       allow delete: if false;
     }
-
-    // For development only - remove in production
-    match /{document=**} {
-      allow read, write: if true;
+    
+    match /verification-codes/{email} {
+      allow read, write: if false;  // Only accessible via Cloud Functions
     }
   }
 } 
