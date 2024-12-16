@@ -1,5 +1,13 @@
 {
   "projects": {
     "default": "govrfs-4d6cb"
+  },
+  "targets": {},
+  "etags": {
+    "govrfs-4d6cb": {
+      "extensionInstances": {
+        "firestore-send-email": "3f1514dfde319a05605b7f1a0fd153c1d79045d4a2f502ac308d47a950807875"
+      }
+    }
   }
 }

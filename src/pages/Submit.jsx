@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { collection, addDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
-import { functions } from '../firebase';
 import confetti from 'canvas-confetti';
 
 function Submit() {
@@ -25,9 +24,11 @@ function Submit() {
   const [showVerification, setShowVerification] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [touched, setTouched] = useState({});
+  const [dialogMessage, setDialogMessage] = useState('');
+  const [showDialog, setShowDialog] = useState(false);
 
-  const sendVerificationEmail = httpsCallable(functions, 'sendVerificationEmail');
-  const verifyEmailCode = httpsCallable(functions, 'verifyEmailCode');
+  const sendVerificationCode = httpsCallable(functions, 'sendVerificationCode');
+  const verifyCode = httpsCallable(functions, 'verifyCode');
 
   const validateEmail = (email) => {
     // Special case for testing
@@ -52,19 +53,27 @@ function Submit() {
   const handleSendCode = async (e) => {
     e.preventDefault();
     if (!validateEmail(formData.contactEmail)) {
-      setEmailError('Must be a .gov email address');
+      setDialogMessage('Must be a .gov email address');
+      setShowDialog(true);
       return;
     }
 
     setLoading(true);
     try {
-      await sendVerificationEmail({ email: formData.contactEmail });
-      setEmailSent(true);
-      setShowVerification(true);
-      alert('Verification code sent to your email');
+      const result = await sendVerificationCode({ 
+        email: formData.contactEmail 
+      });
+      
+      if (result.data.success) {
+        setEmailSent(true);
+        setShowVerification(true);
+        setDialogMessage('Verification code sent to your email');
+        setShowDialog(true);
+      }
     } catch (error) {
-      console.error('Error sending verification:', error);
-      alert('Failed to send verification code');
+      console.error('Error:', error);
+      setDialogMessage('Failed to send verification code. Please try again.');
+      setShowDialog(true);
     } finally {
       setLoading(false);
     }
@@ -73,27 +82,34 @@ function Submit() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!verificationCode) {
-      alert('Please enter verification code');
+      setDialogMessage('Please enter verification code');
+      setShowDialog(true);
       return;
     }
 
     setLoading(true);
     try {
-      // Verify the code first
-      const verifyResult = await verifyEmailCode({ 
+      const verifyResult = await verifyCode({ 
         email: formData.contactEmail, 
         code: verificationCode 
       });
 
       if (verifyResult.data.verified) {
-        // If verified, submit the request
         const docRef = await addDoc(collection(db, 'legislative-requests'), {
           ...formData,
           status: 'pending',
           createdAt: new Date().toISOString(),
         });
 
-        alert('Your request has been submitted successfully!');
+        confetti({
+          particleCount: 100,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
+
+        setDialogMessage('Your request has been submitted successfully!');
+        setShowDialog(true);
+        
         // Reset form
         setFormData({
           legislativeOffice: '',
@@ -110,11 +126,13 @@ function Submit() {
         setShowVerification(false);
         setEmailSent(false);
       } else {
-        alert('Invalid verification code');
+        setDialogMessage(verifyResult.data.message || 'Invalid verification code');
+        setShowDialog(true);
       }
     } catch (error) {
       console.error('Error:', error);
-      alert('Failed to verify code or submit request');
+      setDialogMessage('Failed to verify code or submit request: ' + error.message);
+      setShowDialog(true);
     } finally {
       setLoading(false);
     }
@@ -141,8 +159,28 @@ function Submit() {
     isFieldInvalid(name) ? 'border-red-500 bg-red-50' : ''
   }`;
 
+  const AlertDialog = ({ message, onClose }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white p-6 rounded-lg shadow-lg max-w-sm w-full mx-4">
+        <p className="text-gray-800 mb-4">{message}</p>
+        <button
+          onClick={onClose}
+          className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          OK
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="container mx-auto px-4 py-8">
+      {showDialog && (
+        <AlertDialog 
+          message={dialogMessage} 
+          onClose={() => setShowDialog(false)} 
+        />
+      )}
       <h2 className="text-2xl font-bold mb-4">Post Tech Request</h2>
       <p className="text-gray-600 mb-8">
         Share your office's needs for websites, apps, or data tools. 

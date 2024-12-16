@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 
 const firebaseConfig = {
@@ -12,22 +12,14 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const actionCodeSettings = {
-  url: window.location.origin + '/submit',
-  handleCodeInApp: true,
-};
-
 export const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-auth.settings = {
-  ...auth.settings,
-  actionCodeSettings
-};
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 
-if (window.location.hostname === 'localhost') {
-  connectFirestoreEmulator(db, 'localhost', 8080);
+if (import.meta.env.DEV) {
   connectFunctionsEmulator(functions, 'localhost', 5001);
 }
+
+export default app;

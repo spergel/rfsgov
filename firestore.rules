@@ -1,15 +1,35 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /legislative-requests/{requestId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if true;
-      allow delete: if false;
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
     }
     
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Users collection rules
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Legislative requests rules - allow creation without auth
+    match /legislative-requests/{requestId} {
+      allow read: if true;  // Anyone can read requests
+      allow create: if true;  // Anyone can create requests
+      allow update: if isAdmin();  // Only admins can update
+      allow delete: if isAdmin();  // Only admins can delete
+    }
+
+    // Verification codes collection
     match /verification-codes/{email} {
-      allow read, write: if false;  // Only accessible via Cloud Functions
+      allow read, write: if true;
     }
   }
 } 

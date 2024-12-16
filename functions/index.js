@@ -1,41 +1,50 @@
-const functions = require('firebase-functions');
-const admin = require('firebase-admin');
+const { onCall } = require('firebase-functions/v2/https');
+const { initializeApp } = require('firebase-admin/app');
+const { defineSecret } = require('firebase-functions/params');
 const { Resend } = require('resend');
-const cors = require('cors')({ origin: true });
+const { getFirestore } = require('firebase-admin/firestore');
 
-admin.initializeApp();
-const db = admin.firestore();
-const resend = new Resend(functions.config().resend.api_key);
+// Initialize Firebase Admin
+initializeApp();
 
-// Send verification email using Resend
-exports.sendVerificationEmail = functions.https.onCall(async (data, context) => {
-  const { email } = data;
+const db = getFirestore();
+
+// Define the secret properly
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+
+// Send verification code
+exports.sendVerificationCode = onCall({ secrets: [RESEND_API_KEY] }, async (request) => {
+  // Initialize Resend with the secret value
+  const resend = new Resend(RESEND_API_KEY.value());
+  console.log('Resend initialized with API key length:', RESEND_API_KEY.value().length);
   
-  // Log the incoming request
-  console.log('Attempting to send verification email to:', email);
+  const { email } = request.data;
+  console.log('Attempting to send email to:', email);
   
-  // Generate a 6-digit code
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  
+  // Verify it's a .gov email (or test email)
+  if (email !== 'spergel.joshua@gmail.com' && !email.endsWith('.gov')) {
+    throw new Error('Must use a .gov email address');
+  }
+
   try {
-    // Log before storing code
-    console.log('Storing verification code in Firestore...');
+    // Generate a 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    console.log('Generated verification code:', code);
     
-    // Store the code
+    // Store the code in Firestore with expiration
     await db.collection('verification-codes').doc(email).set({
       code,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(),
       attempts: 0
     });
+    console.log('Code stored in Firestore');
 
-    // Log before sending email
-    console.log('Sending email via Resend...');
-
-    // Send email using Resend
-    const emailResponse = await resend.emails.send({
-      from: 'RFS Government <rfsgovernment@rfsgovernment.com>',
-      to: email,
-      subject: 'Your Verification Code',
+    // Send verification email using Resend
+    console.log('Attempting to send email via Resend...');
+    const { data, error } = await resend.emails.send({
+      from: 'Verification <rfsgovernment@rfsgovernment.com>',
+      to: [email],
+      subject: 'Your Verification Code for Legislative Request',
       html: `
         <h1>Verification Code</h1>
         <p>Your verification code is: <strong>${code}</strong></p>
@@ -43,58 +52,63 @@ exports.sendVerificationEmail = functions.https.onCall(async (data, context) => 
       `
     });
 
-    // Log the Resend response
-    console.log('Resend API response:', emailResponse);
-
-    return { success: true };
-
-  } catch (error) {
-    // More detailed error logging
-    console.error('Failed to send verification email:', {
-      error: error.message,
-      stack: error.stack,
-      details: error.response?.data // For Resend-specific errors
-    });
-    throw new functions.https.HttpsError('internal', 'Failed to send verification email');
-  }
-});
-
-// Updated verifyEmailCode function with expiration check
-exports.verifyEmailCode = functions.https.onCall(async (data, context) => {
-  const { email, code } = data;
-  
-  const docRef = db.collection('verification-codes').doc(email);
-  const doc = await docRef.get();
-
-  if (!doc.exists) {
-    throw new functions.https.HttpsError('not-found', 'No verification code found');
-  }
-
-  const { code: storedCode, attempts, createdAt } = doc.data();
-  
-  if (code !== storedCode) {
-    await docRef.update({ attempts: admin.firestore.FieldValue.increment(1) });
-    throw new functions.https.HttpsError('invalid-argument', 'Invalid code');
-  }
-
-  // Code is valid - clean up
-  await docRef.delete();
-  return { verified: true };
-});
-
-// Send confirmation using Firebase Auth
-exports.sendConfirmationEmail = functions.firestore
-  .document('legislative-requests/{requestId}')
-  .onCreate(async (snap, context) => {
-    const data = snap.data();
-    
-    try {
-      await admin.auth().sendCustomEmail(data.contactEmail, {
-        subject: 'Request Received',
-        text: `We've received your request: ${data.title}`,
-        html: `<p>We've received your request: <strong>${data.title}</strong></p>`
-      });
-    } catch (error) {
-      console.error('Email error:', error);
+    if (error) {
+      console.error('Resend error:', error);
+      throw new Error(`Email sending failed: ${error.message}`);
     }
-  });
+
+    console.log('Resend success:', data);
+    return { success: true };
+  } catch (error) {
+    console.error('Detailed error:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    throw new Error('Failed to send verification code');
+  }
+});
+
+// Verify code
+exports.verifyCode = onCall(async (request) => {
+  const { email, code } = request.data;
+  
+  try {
+    const docRef = db.collection('verification-codes').doc(email);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return { verified: false, message: 'No verification code found' };
+    }
+
+    const data = doc.data();
+    const now = new Date();
+    const createdAt = data.createdAt.toDate();
+    const timeDiff = (now - createdAt) / 1000 / 60; // in minutes
+
+    // Check if code is expired (15 minutes)
+    if (timeDiff > 15) {
+      await docRef.delete();
+      return { verified: false, message: 'Code expired' };
+    }
+
+    // Check if too many attempts
+    if (data.attempts >= 3) {
+      await docRef.delete();
+      return { verified: false, message: 'Too many attempts' };
+    }
+
+    // Verify code
+    if (data.code === code) {
+      await docRef.delete();
+      return { verified: true };
+    } else {
+      // Increment attempts
+      await docRef.update({ attempts: data.attempts + 1 });
+      return { verified: false, message: 'Invalid code' };
+    }
+  } catch (error) {
+    console.error('Error verifying code:', error);
+    throw new Error('Failed to verify code');
+  }
+});

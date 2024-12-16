@@ -1,4 +1,3 @@
-import { Auth0Provider } from '@auth0/auth0-react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext.jsx';
 import Navbar from './components/Navbar.jsx';
@@ -12,34 +11,26 @@ import About from './pages/About';
 
 export function App() {
   return (
-    <Auth0Provider
-      domain="dev-jmb3lq4tcsdn0tqb.us.auth0.com"
-      clientId="zg9Q9KVv9uN9CVJ4k9nZe5sVZicOGmYO"
-      authorizationParams={{
-        redirect_uri: window.location.origin
-      }}
-    >
-      <AuthProvider>
-        <Router>
-          <Navbar />
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/submit" element={<Submit />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/project/:id" element={<ProjectDetails />} />
-            <Route 
-              path="/admin" 
-              element={
-                <ProtectedRoute adminOnly={true}>
-                  <AdminDashboard />
-                </ProtectedRoute>
-              } 
-            />
-            <Route path="/about" element={<About />} />
-          </Routes>
-        </Router>
-      </AuthProvider>
-    </Auth0Provider>
+    <AuthProvider>
+      <Router>
+        <Navbar />
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/submit" element={<Submit />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/project/:id" element={<ProjectDetails />} />
+          <Route 
+            path="/admin" 
+            element={
+              <ProtectedRoute requiredRole="admin">
+                <AdminDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route path="/about" element={<About />} />
+        </Routes>
+      </Router>
+    </AuthProvider>
   );
 }
 

@@ -1,15 +1,18 @@
-import { useAuth0 } from '@auth0/auth0-react';
+import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
 
-function ProtectedRoute({ children }) {
-  const { isAuthenticated, isLoading } = useAuth0();
+function ProtectedRoute({ children, requiredRole }) {
+  const { currentUser, isAdmin } = useAuth();
 
-  if (isLoading) {
-    return <div>Loading...</div>;
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" />;
+  // Only check auth if it's an admin route
+  if (requiredRole === 'admin') {
+    if (!currentUser) {
+      return <Navigate to="/login" />;
+    }
+    
+    if (!isAdmin) {
+      return <Navigate to="/" />;
+    }
   }
 
   return children;

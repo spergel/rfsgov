@@ -8,13 +8,18 @@
     ],
     "rewrites": [
       {
+        "source": "/api/v1/**",
+        "function": "sendVerificationCode"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
     ]
   },
   "functions": {
-    "source": "functions"
+    "source": "functions",
+    "region": "us-east1"
   },
   "firestore": {
     "rules": "firestore.rules",

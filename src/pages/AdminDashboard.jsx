@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import { collection, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { useAuth0 } from '@auth0/auth0-react';
+import { useAuth } from '../contexts/AuthContext';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 function AdminDashboard() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
-  const { user, isAuthenticated, isLoading: authLoading } = useAuth0();
+  const { currentUser, isAdmin } = useAuth();
+  const functions = getFunctions();
 
   useEffect(() => {
     const fetchRequests = async () => {
@@ -28,20 +30,28 @@ function AdminDashboard() {
     fetchRequests();
   }, []);
 
-  const handleStatusUpdate = async (requestId, newStatus) => {
+  const handleStatusUpdate = async (request, newStatus) => {
     try {
-      const requestRef = doc(db, 'legislative-requests', requestId);
+      const requestRef = doc(db, 'legislative-requests', request.id);
       await updateDoc(requestRef, {
         status: newStatus,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        adminNotes: request.adminNotes
       });
 
-      // Update local state
-      setRequests(requests.map(request => 
-        request.id === requestId 
-          ? { ...request, status: newStatus }
-          : request
+      const sendStatusUpdateEmail = httpsCallable(functions, 'sendStatusUpdateEmail');
+      await sendStatusUpdateEmail({
+        email: request.contactEmail,
+        status: newStatus,
+        title: request.title
+      });
+
+      setRequests(requests.map(r => 
+        r.id === request.id 
+          ? { ...r, status: newStatus }
+          : r
       ));
+
     } catch (error) {
       console.error('Error updating status:', error);
       alert('Failed to update status');
@@ -52,12 +62,12 @@ function AdminDashboard() {
     statusFilter === 'all' ? true : request.status === statusFilter
   );
 
-  if (authLoading || loading) {
+  if (loading) {
     return <div>Loading requests...</div>;
   }
 
-  if (!isAuthenticated) {
-    return <div>Please log in to view the dashboard.</div>;
+  if (!currentUser || !isAdmin) {
+    return <div>Access denied. Admin privileges required.</div>;
   }
 
   return (
@@ -81,10 +91,8 @@ function AdminDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredRequests.map(request => (
           <div key={request.id} className="bg-white p-6 rounded-lg shadow-md">
-            <h3 className="text-xl font-semibold mb-2">{request.title}</h3>
-            <p className="text-gray-600 mb-4">{request.problemStatement}</p>
-            
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="text-xl font-semibold">{request.title}</h3>
               <span className={`px-3 py-1 rounded-full text-sm ${
                 request.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
                 request.status === 'approved' ? 'bg-green-100 text-green-800' :
@@ -92,28 +100,52 @@ function AdminDashboard() {
               }`}>
                 {request.status || 'pending'}
               </span>
+            </div>
+
+            <p className="text-gray-600 mb-4">{request.problemStatement}</p>
+            
+            <div className="text-sm text-gray-500 mb-4">
+              <p>Office: {request.legislativeOffice}</p>
+              <p>Type: {request.projectType}</p>
+              {request.projectType === 'paid' && <p>Budget: ${request.budget}</p>}
+              <p>Submitted: {new Date(request.createdAt).toLocaleDateString()}</p>
+            </div>
+
+            <div className="mt-4">
+              <textarea
+                className="w-full p-2 border rounded"
+                placeholder="Add admin notes..."
+                value={request.adminNotes || ''}
+                onChange={(e) => {
+                  setRequests(requests.map(r =>
+                    r.id === request.id
+                      ? { ...r, adminNotes: e.target.value }
+                      : r
+                  ));
+                }}
+              />
+            </div>
+
+            <div className="flex justify-between items-center mt-4">
               <div className="flex gap-2">
                 <button
-                  onClick={() => handleStatusUpdate(request.id, 'approved')}
+                  onClick={() => handleStatusUpdate(request, 'approved')}
                   className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600"
                 >
                   Approve
                 </button>
                 <button
-                  onClick={() => handleStatusUpdate(request.id, 'declined')}
+                  onClick={() => handleStatusUpdate(request, 'declined')}
                   className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
                 >
                   Decline
                 </button>
-              </div>
-            </div>
-
-            <div className="flex justify-between items-center">
-              <div className="text-sm text-gray-500">
-                <p>Office: {request.legislativeOffice}</p>
-                <p>Type: {request.projectType}</p>
-                {request.projectType === 'paid' && <p>Budget: ${request.budget}</p>}
-                <p>Submitted: {new Date(request.createdAt).toLocaleDateString()}</p>
+                <button
+                  onClick={() => handleStatusUpdate(request, 'pending')}
+                  className="px-3 py-1 text-sm bg-yellow-500 text-white rounded hover:bg-yellow-600"
+                >
+                  Reset
+                </button>
               </div>
               <button 
                 className="text-blue-500 hover:text-blue-700"

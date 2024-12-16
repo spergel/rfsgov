@@ -1,5 +1,13 @@
-import { createContext, useContext } from 'react';
-import { useAuth0 } from '@auth0/auth0-react';
+import { createContext, useContext, useState, useEffect } from 'react';
+import { 
+  getAuth, 
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  sendPasswordResetEmail
+} from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 
 const AuthContext = createContext();
 
@@ -8,29 +16,49 @@ export function useAuth() {
 }
 
 export function AuthProvider({ children }) {
-  const {
-    isAuthenticated,
-    user,
-    isLoading,
-    loginWithRedirect,
-    logout,
-  } = useAuth0();
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const value = {
-    currentUser: user,
-    isAdmin: () => user?.email === 'jspergel@alumni.princeton.edu',
-    isAuthenticated: () => isAuthenticated,
-    login: loginWithRedirect,
-    logout: () => logout({ returnTo: window.location.origin }),
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        // Check if user is admin
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        setIsAdmin(userDoc.data()?.role === 'admin');
+      } else {
+        setIsAdmin(false);
+      }
+      setLoading(false);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  const login = (email, password) => {
+    return signInWithEmailAndPassword(auth, email, password);
   };
 
-  if (isLoading) {
-    return <div>Loading...</div>;
-  }
+  const logout = () => {
+    return signOut(auth);
+  };
+
+  const resetPassword = (email) => {
+    return sendPasswordResetEmail(auth, email);
+  };
+
+  const value = {
+    currentUser,
+    isAdmin,
+    login,
+    logout,
+    resetPassword
+  };
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      {!loading && children}
     </AuthContext.Provider>
   );
 } 
