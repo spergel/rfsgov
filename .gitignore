@@ -31,3 +31,5 @@ firebase-debug.log
 .env
 .env.local
 .dev.vars
+
+dist/assets/index-B-ouRwzR.js
